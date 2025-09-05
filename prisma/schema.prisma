@@ -1,0 +1,483 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// User management
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  password  String?
+  role      Role     @default(USER)
+  
+  // Subscription details
+  subscription     SubscriptionTier @default(STARTER)
+  subscriptionId   String?
+  customerId       String?
+  subscriptionEnd  DateTime?
+  
+  // Profile
+  firstName        String?
+  lastName         String?
+  avatar           String?
+  phone            String?
+  timezone         String?
+  
+  // Settings
+  emailVerified    DateTime?
+  twoFactorEnabled Boolean @default(false)
+  twoFactorSecret  String?
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  accounts        Account[]
+  sessions        Session[]
+  tradingAccounts TradingAccount[]
+  bots            Bot[]
+  strategies      Strategy[]
+  trades          Trade[]
+  notifications   Notification[]
+  subscriptions   Subscription[]
+  
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verificationtokens")
+}
+
+// Trading related models
+model TradingAccount {
+  id          String          @id @default(cuid())
+  userId      String
+  provider    BrokerProvider
+  accountId   String
+  accountName String?
+  
+  // API Configuration
+  apiKey      String
+  apiSecret   String
+  apiUrl      String?
+  
+  // Account Status
+  isActive    Boolean @default(false)
+  isConnected Boolean @default(false)
+  lastSync    DateTime?
+  
+  // Account Details
+  balance        Float?
+  equity         Float?
+  margin         Float?
+  dayTradingBuyingPower Float?
+  
+  // Risk Settings
+  maxDailyLoss   Float?
+  maxPositions   Int @default(3)
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bots Bot[]
+  trades Trade[]
+  
+  @@unique([userId, provider, accountId])
+  @@map("trading_accounts")
+}
+
+model Strategy {
+  id          String       @id @default(cuid())
+  userId      String?
+  name        String
+  description String?
+  type        StrategyType
+  
+  // Strategy Configuration
+  parameters  Json
+  indicators  Json
+  conditions  Json
+  riskSettings Json
+  
+  // Strategy Status
+  isPublic    Boolean @default(false)
+  isActive    Boolean @default(true)
+  version     String @default("1.0.0")
+  
+  // Performance Metrics
+  totalTrades    Int @default(0)
+  winningTrades  Int @default(0)
+  totalReturn    Float @default(0)
+  winRate        Float @default(0)
+  sharpeRatio    Float @default(0)
+  maxDrawdown    Float @default(0)
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  bots Bot[]
+  backtests Backtest[]
+  
+  @@map("strategies")
+}
+
+model Bot {
+  id          String    @id @default(cuid())
+  userId      String
+  accountId   String
+  strategyId  String
+  
+  name        String
+  description String?
+  
+  // Bot Configuration
+  settings    Json
+  parameters  Json?
+  
+  // Bot Status
+  status      BotStatus @default(STOPPED)
+  isActive    Boolean @default(false)
+  
+  // Performance Tracking
+  totalTrades    Int @default(0)
+  winningTrades  Int @default(0)
+  currentPnL     Float @default(0)
+  todayPnL       Float @default(0)
+  totalPnL       Float @default(0)
+  winRate        Float @default(0)
+  
+  // Runtime Stats
+  startedAt      DateTime?
+  lastTradeAt    DateTime?
+  uptime         Int @default(0) // in seconds
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  user     User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account  TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  strategy Strategy       @relation(fields: [strategyId], references: [id], onDelete: Cascade)
+  trades   Trade[]
+  orders   Order[]
+  
+  @@map("bots")
+}
+
+model Trade {
+  id       String @id @default(cuid())
+  userId   String
+  botId    String?
+  accountId String
+  
+  // Trade Details
+  symbol      String
+  side        TradeSide
+  quantity    Float
+  entryPrice  Float
+  exitPrice   Float?
+  
+  // P&L Calculation
+  unrealizedPnL Float @default(0)
+  realizedPnL   Float @default(0)
+  commission    Float @default(0)
+  fees          Float @default(0)
+  
+  // Trade Status
+  status      TradeStatus @default(OPEN)
+  
+  // Trade Metadata
+  signalType    String?
+  confidence    Float?
+  stopLoss      Float?
+  takeProfit    Float?
+  trailStop     Boolean @default(false)
+  trailAmount   Float?
+  
+  // Timestamps
+  openedAt  DateTime @default(now())
+  closedAt  DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bot     Bot?           @relation(fields: [botId], references: [id], onDelete: SetNull)
+  account TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  orders  Order[]
+  
+  @@map("trades")
+}
+
+model Order {
+  id        String @id @default(cuid())
+  tradeId   String?
+  botId     String?
+  
+  // Order Details
+  symbol       String
+  orderType    OrderType
+  side         TradeSide
+  quantity     Float
+  price        Float?
+  stopPrice    Float?
+  timeInForce  TimeInForce @default(GTC)
+  
+  // Order Status
+  status       OrderStatus @default(PENDING)
+  filledQty    Float @default(0)
+  avgFillPrice Float @default(0)
+  
+  // External References
+  brokerOrderId String?
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  filledAt  DateTime?
+  
+  // Relations
+  trade Trade? @relation(fields: [tradeId], references: [id], onDelete: SetNull)
+  bot   Bot?   @relation(fields: [botId], references: [id], onDelete: SetNull)
+  
+  @@map("orders")
+}
+
+model Backtest {
+  id         String @id @default(cuid())
+  strategyId String
+  
+  // Backtest Configuration
+  startDate     DateTime
+  endDate       DateTime
+  initialCapital Float
+  commission     Float @default(0)
+  
+  // Results
+  totalReturn    Float @default(0)
+  totalTrades    Int @default(0)
+  winningTrades  Int @default(0)
+  winRate        Float @default(0)
+  maxDrawdown    Float @default(0)
+  sharpeRatio    Float @default(0)
+  profitFactor   Float @default(0)
+  avgWin         Float @default(0)
+  avgLoss        Float @default(0)
+  
+  // Backtest Data
+  results Json?
+  equity  Json?
+  
+  // Status
+  status    BacktestStatus @default(PENDING)
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  strategy Strategy @relation(fields: [strategyId], references: [id], onDelete: Cascade)
+  
+  @@map("backtests")
+}
+
+model Notification {
+  id      String            @id @default(cuid())
+  userId  String
+  
+  title   String
+  message String
+  type    NotificationType
+  
+  isRead  Boolean @default(false)
+  
+  // Metadata
+  data    Json?
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("notifications")
+}
+
+model Subscription {
+  id              String @id @default(cuid())
+  userId          String
+  
+  // Stripe Details
+  stripeCustomerId       String?
+  stripeSubscriptionId   String? @unique
+  stripePriceId          String?
+  stripeCurrentPeriodEnd DateTime?
+  
+  // Subscription Details
+  tier        SubscriptionTier
+  status      SubscriptionStatus @default(ACTIVE)
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("subscriptions")
+}
+
+// Enums
+enum Role {
+  USER
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum SubscriptionTier {
+  STARTER
+  PROFESSIONAL
+  ENTERPRISE
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  INACTIVE
+  CANCELED
+  PAST_DUE
+}
+
+enum BrokerProvider {
+  APEX
+  NINJATRADER
+  INTERACTIVE_BROKERS
+  TD_AMERITRADE
+  E_TRADE
+  SCHWAB
+  BINANCE
+  COINBASE
+}
+
+enum StrategyType {
+  ICT
+  SCALPING
+  SWING
+  TREND_FOLLOWING
+  MEAN_REVERSION
+  BREAKOUT
+  ARBITRAGE
+  CUSTOM
+}
+
+enum BotStatus {
+  RUNNING
+  STOPPED
+  PAUSED
+  ERROR
+  STARTING
+  STOPPING
+}
+
+enum TradeSide {
+  BUY
+  SELL
+  LONG
+  SHORT
+}
+
+enum TradeStatus {
+  OPEN
+  CLOSED
+  CANCELLED
+}
+
+enum OrderType {
+  MARKET
+  LIMIT
+  STOP
+  STOP_LIMIT
+  TRAILING_STOP
+}
+
+enum OrderStatus {
+  PENDING
+  WORKING
+  FILLED
+  PARTIALLY_FILLED
+  CANCELLED
+  REJECTED
+}
+
+enum TimeInForce {
+  DAY
+  GTC
+  IOC
+  FOK
+}
+
+enum BacktestStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum NotificationType {
+  TRADE
+  BOT_STATUS
+  ACCOUNT
+  SYSTEM
+  MARKETING
+}
