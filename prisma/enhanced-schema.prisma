@@ -1,0 +1,151 @@
+// Enhanced Trading Account Model with Crypto & Demo Support
+model TradingAccount {
+  id          String          @id @default(cuid())
+  userId      String
+  provider    BrokerProvider
+  accountId   String
+  accountName String?
+  
+  // Account Type - CRITICAL for Demo/Live switching
+  accountType AccountType @default(DEMO)
+  assetClass  AssetClass  @default(FOREX)
+  exchangeType ExchangeType @default(SPOT)
+  
+  // API Configuration
+  apiKey      String
+  apiSecret   String
+  apiUrl      String?
+  passphrase  String?     // For crypto exchanges like OKX
+  testnet     Boolean @default(true)  // Start with testnet/demo
+  
+  // Account Status
+  isActive    Boolean @default(false)
+  isConnected Boolean @default(false)
+  lastSync    DateTime?
+  
+  // Account Details
+  balance        Float?
+  equity         Float?
+  margin         Float?
+  dayTradingBuyingPower Float?
+  
+  // Crypto-specific
+  spotBalance    Json?       // {"BTC": 0.5, "ETH": 2.3}
+  futuresBalance Json?       // Futures wallet balances
+  marginBalance  Json?       // Margin trading balances
+  
+  // Risk Settings
+  maxDailyLoss   Float?
+  maxPositions   Int @default(3)
+  
+  // Demo/Live Switch Tracking
+  demoToLiveDate DateTime?   // When user switched to live
+  totalDemoTrades Int @default(0)
+  demoPnL        Float @default(0)
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bots Bot[]
+  trades Trade[]
+  
+  @@unique([userId, provider, accountId])
+  @@map("trading_accounts")
+}
+
+// New model for Market Data Sources
+model MarketDataSource {
+  id       String @id @default(cuid())
+  name     String
+  type     MarketDataType
+  apiUrl   String
+  apiKey   String?
+  isActive Boolean @default(true)
+  
+  // Rate limiting
+  requestsPerMinute Int @default(60)
+  lastRequest       DateTime?
+  
+  // Supported features
+  supportsRealtime   Boolean @default(false)
+  supportsHistorical Boolean @default(true)
+  supportsCrypto     Boolean @default(false)
+  supportsForex      Boolean @default(false)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@map("market_data_sources")
+}
+
+// Enhanced enums
+enum AccountType {
+  LIVE
+  DEMO
+  PAPER
+  TESTNET
+  SANDBOX
+}
+
+enum AssetClass {
+  FOREX
+  FUTURES
+  STOCKS
+  OPTIONS
+  CRYPTO
+  COMMODITIES
+  INDICES
+}
+
+enum ExchangeType {
+  SPOT
+  FUTURES
+  DERIVATIVES
+  MARGIN
+  OPTIONS
+}
+
+enum MarketDataType {
+  COINGECKO
+  COINMARKETCAP
+  COINGLASS
+  RWA_XYZ
+  ALPHA_VANTAGE
+  POLYGON
+  TWELVE_DATA
+  BINANCE_DATA
+  BYBIT_DATA
+}
+
+enum BrokerProvider {
+  // Traditional Brokers
+  APEX
+  NINJATRADER
+  TRADOVATE
+  INTERACTIVE_BROKERS
+  TD_AMERITRADE
+  E_TRADE
+  SCHWAB
+  
+  // Crypto Exchanges
+  BINANCE
+  BYBIT
+  COINBASE
+  KRAKEN
+  KUCOIN
+  OKX
+  GATE_IO
+  HUOBI
+  BITGET
+  MEXC
+  
+  // Demo/Testnet versions
+  BINANCE_TESTNET
+  BYBIT_TESTNET
+  COINBASE_SANDBOX
+  TRADOVATE_DEMO
+  NINJA_TRADER_SIM
+}
