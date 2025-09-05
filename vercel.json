@@ -1,18 +1,9 @@
 {
-  "buildCommand": "npm run build",
-  "outputDirectory": ".next",
   "framework": "nextjs",
+  "buildCommand": "npm run build",
   "installCommand": "npm install",
-  "devCommand": "npm run dev",
-  "env": {
-    "NEXTAUTH_SECRET": "@nextauth_secret",
-    "DATABASE_URL": "@database_url",
-    "STRIPE_SECRET_KEY": "@stripe_secret_key",
-    "APEX_API_KEY": "@apex_api_key",
-    "NINJA_TRADER_API_URL": "@ninja_trader_api_url"
-  },
   "functions": {
-    "pages/api/**/*.js": {
+    "app/api/**/*.js": {
       "runtime": "nodejs18.x"
     }
   },
