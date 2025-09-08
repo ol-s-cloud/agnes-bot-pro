@@ -1,79 +1,176 @@
 /**
- * Next.js Middleware with Rate Limiting - SECURITY PROTECTION
- * Applies rate limiting to all API routes
+ * Enhanced Next.js Middleware with Complete Security Suite
+ * Rate limiting + Security headers + CSRF protection + Input validation
  */
 
 import { NextResponse } from 'next/server';
 import { createRateLimitMiddleware, tradingRateLimiter } from './lib/security/rate-limiter.js';
+import { createSecurityMiddleware, globalCSRF } from './lib/security/csrf-protection.js';
 
-// Initialize rate limiting middleware
-const rateLimitMiddleware = createRateLimitMiddleware({
-  trading: 10,     // 10 trading requests per minute
-  account: 30,     // 30 account requests per minute
-  market: 60,      // 60 market data requests per minute
-  websocket: 5,    // 5 websocket connections per minute
-  global: 100      // 100 total requests per minute
+// Initialize security middleware
+const securityMiddleware = createSecurityMiddleware({
+  allowedOrigins: [
+    process.env.NEXTAUTH_URL,
+    process.env.APP_URL,
+    'http://localhost:3000',
+    'https://localhost:3000'
+  ].filter(Boolean),
+  maxRequestSize: 5 * 1024 * 1024, // 5MB
+  validateUserAgent: true,
+  csrf: {
+    secret: process.env.NEXTAUTH_SECRET
+  }
 });
 
 export async function middleware(request) {
   const { pathname } = request.nextUrl;
   
-  // Apply rate limiting to API routes
+  // ✅ SECURITY: Apply comprehensive protection to API routes
   if (pathname.startsWith('/api/')) {
     try {
-      // Get user identifier (IP address, user ID, or API key)
+      // 1. Rate Limiting
       const userId = getUserId(request);
-      
-      // Get endpoint and exchange info
       const endpoint = pathname;
       const exchange = getExchange(request);
       
-      // Check rate limit
-      const result = tradingRateLimiter.isAllowed(userId, endpoint, exchange);
+      const rateLimitResult = tradingRateLimiter.isAllowed(userId, endpoint, exchange);
       
-      if (!result.allowed) {
+      if (!rateLimitResult.allowed) {
         return new NextResponse(
           JSON.stringify({
             error: 'Rate limit exceeded',
-            reason: result.reason,
-            retryAfter: result.retryAfter,
-            message: getRateLimitMessage(result.reason)
+            reason: rateLimitResult.reason,
+            retryAfter: rateLimitResult.retryAfter,
+            message: getRateLimitMessage(rateLimitResult.reason)
           }),
           {
             status: 429,
             headers: {
               'Content-Type': 'application/json',
-              'X-RateLimit-Limit': result.limit?.toString() || '0',
+              'X-RateLimit-Limit': rateLimitResult.limit?.toString() || '0',
               'X-RateLimit-Remaining': '0',
-              'X-RateLimit-Reset': Math.ceil((Date.now() + (result.retryAfter || 60000)) / 1000).toString(),
-              'Retry-After': Math.ceil((result.retryAfter || 60000) / 1000).toString()
+              'X-RateLimit-Reset': Math.ceil((Date.now() + (rateLimitResult.retryAfter || 60000)) / 1000).toString(),
+              'Retry-After': Math.ceil((rateLimitResult.retryAfter || 60000) / 1000).toString()
             }
           }
         );
       }
       
-      // Add rate limit headers to successful requests
+      // 2. CSRF Protection for state-changing operations
+      if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method)) {
+        // Skip CSRF for specific endpoints that handle their own auth
+        const skipCSRF = [
+          '/api/auth/',
+          '/api/csrf',
+          '/api/webhooks/'
+        ].some(path => pathname.startsWith(path));
+        
+        if (!skipCSRF) {
+          const sessionId = globalCSRF.getSessionId(request);
+          const csrfToken = request.headers.get('x-csrf-token') || 
+                           request.nextUrl.searchParams.get('csrfToken');
+          
+          const csrfValidation = globalCSRF.validateToken(csrfToken, sessionId);
+          
+          if (!csrfValidation.valid) {
+            return new NextResponse(
+              JSON.stringify({
+                error: 'CSRF validation failed',
+                reason: csrfValidation.reason,
+                message: globalCSRF.getErrorMessage(csrfValidation.reason)
+              }),
+              {
+                status: 403,
+                headers: {
+                  'Content-Type': 'application/json'
+                }
+              }
+            );
+          }
+        }
+      }
+      
+      // 3. Origin Validation for sensitive endpoints
+      if (pathname.startsWith('/api/trading/') || pathname.startsWith('/api/account/')) {
+        const origin = request.headers.get('origin');
+        const allowedOrigins = [
+          process.env.NEXTAUTH_URL,
+          process.env.APP_URL,
+          'http://localhost:3000',
+          'https://localhost:3000'
+        ].filter(Boolean);
+        
+        if (origin && !allowedOrigins.includes(origin)) {
+          return new NextResponse(
+            JSON.stringify({
+              error: 'Origin not allowed',
+              origin: origin
+            }),
+            {
+              status: 403,
+              headers: {
+                'Content-Type': 'application/json'
+              }
+            }
+          );
+        }
+      }
+      
+      // 4. Content-Type validation for data modification
+      if (['POST', 'PUT', 'PATCH'].includes(request.method)) {
+        const contentType = request.headers.get('content-type');
+        if (contentType && !contentType.includes('application/json') && !contentType.includes('multipart/form-data')) {
+          return new NextResponse(
+            JSON.stringify({
+              error: 'Invalid content type',
+              expected: 'application/json',
+              received: contentType
+            }),
+            {
+              status: 400,
+              headers: {
+                'Content-Type': 'application/json'
+              }
+            }
+          );
+        }
+      }
+      
+      // Create response with security headers
       const response = NextResponse.next();
-      response.headers.set('X-RateLimit-Limit', (result.limit || 100).toString());
-      response.headers.set('X-RateLimit-Remaining', (result.remaining || 0).toString());
-      response.headers.set('X-RateLimit-Reset', Math.ceil((result.resetTime || Date.now() + 60000) / 1000).toString());
+      
+      // Add rate limit headers
+      response.headers.set('X-RateLimit-Limit', (rateLimitResult.limit || 100).toString());
+      response.headers.set('X-RateLimit-Remaining', (rateLimitResult.remaining || 0).toString());
+      response.headers.set('X-RateLimit-Reset', Math.ceil((rateLimitResult.resetTime || Date.now() + 60000) / 1000).toString());
+      
+      // Add API-specific security headers
+      response.headers.set('X-Content-Type-Options', 'nosniff');
+      response.headers.set('X-Frame-Options', 'DENY');
+      response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate');
       
       return response;
       
     } catch (error) {
-      console.error('Rate limiting error:', error);
-      // Continue without rate limiting on error (fail open for availability)
+      console.error('Middleware error:', error);
+      // Fail open for availability
       return NextResponse.next();
     }
   }
   
-  // Apply security headers to all routes
+  // ✅ SECURITY: Apply security headers to all routes
   const response = NextResponse.next();
   
-  // Security headers (we'll enhance these in step 3)
+  // Basic security headers for all routes
   response.headers.set('X-Frame-Options', 'DENY');
   response.headers.set('X-Content-Type-Options', 'nosniff');
   response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  response.headers.set('X-XSS-Protection', '1; mode=block');
+  
+  // HSTS for production
+  if (process.env.NODE_ENV === 'production') {
+    response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
+  }
   
   return response;
 }
@@ -82,13 +179,12 @@ export async function middleware(request) {
  * ✅ SECURE: Extract user identifier from request
  */
 function getUserId(request) {
-  // Try to get user ID from various sources
+  // Try authorization header
   const authHeader = request.headers.get('authorization');
   if (authHeader) {
-    // Extract API key or session token
-    const match = authHeader.match(/Bearer\s+(.+)/);
+    const match = authHeader.match(/Bearer\\s+(.+)/);
     if (match) {
-      return `api_${match[1].substring(0, 8)}`; // Use first 8 chars of token
+      return `api_${match[1].substring(0, 8)}`;
     }
   }
   
@@ -108,13 +204,13 @@ function getUserId(request) {
  * ✅ SECURE: Extract exchange information from request
  */
 function getExchange(request) {
-  // Try to get exchange from URL path
+  // Try URL path
   const pathname = request.nextUrl.pathname;
   if (pathname.includes('binance')) return 'binance';
   if (pathname.includes('bybit')) return 'bybit';
   if (pathname.includes('tradovate')) return 'tradovate';
   
-  // Try to get from query parameters
+  // Try query parameters
   const searchParams = request.nextUrl.searchParams;
   const exchange = searchParams.get('exchange');
   if (exchange) return exchange.toLowerCase();
@@ -145,8 +241,9 @@ export const config = {
   matcher: [
     // Match all API routes
     '/api/:path*',
-    // Match specific trading routes
+    // Match specific protected routes
     '/trading/:path*',
-    '/dashboard/:path*'
+    '/dashboard/:path*',
+    '/admin/:path*'
   ]
 };
