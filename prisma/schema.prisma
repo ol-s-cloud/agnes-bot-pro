@@ -1,5 +1,5 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
+// Agnes Bot Pro - Database Schema
+// This is your Prisma schema file
 
 generator client {
   provider = "prisma-client-js"
@@ -10,46 +10,29 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// User management
+// ===== USER MANAGEMENT =====
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
-  password  String?
-  role      Role     @default(USER)
-  
-  // Subscription details
-  subscription     SubscriptionTier @default(STARTER)
-  subscriptionId   String?
-  customerId       String?
-  subscriptionEnd  DateTime?
-  
-  // Profile
-  firstName        String?
-  lastName         String?
-  avatar           String?
-  phone            String?
-  timezone         String?
-  
-  // Settings
-  emailVerified    DateTime?
-  twoFactorEnabled Boolean @default(false)
-  twoFactorSecret  String?
-  
-  // Timestamps
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  emailVerified DateTime?
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Trading preferences
+  preferredMode TradingMode @default(DEMO)
+  riskTolerance RiskLevel   @default(MEDIUM)
+
   // Relations
-  accounts        Account[]
-  sessions        Session[]
-  tradingAccounts TradingAccount[]
-  bots            Bot[]
-  strategies      Strategy[]
-  trades          Trade[]
-  notifications   Notification[]
-  subscriptions   Subscription[]
-  
+  accounts         Account[]
+  sessions         Session[]
+  tradingAccounts  TradingAccount[]
+  orders           Order[]
+  portfolios       Portfolio[]
+  strategies       Strategy[]
+  notifications    Notification[]
+
   @@map("users")
 }
 
@@ -83,364 +66,227 @@ model Session {
   @@map("sessions")
 }
 
-model VerificationToken {
-  identifier String
-  token      String   @unique
-  expires    DateTime
-
-  @@unique([identifier, token])
-  @@map("verificationtokens")
-}
-
-// Trading related models
+// ===== TRADING ACCOUNTS =====
 model TradingAccount {
-  id          String          @id @default(cuid())
+  id          String        @id @default(cuid())
   userId      String
-  provider    BrokerProvider
-  accountId   String
-  accountName String?
+  platform    TradingPlatform
+  accountType AccountType
+  accountId   String        // External account ID
+  nickname    String?       // User-friendly name
+  isActive    Boolean       @default(true)
+  isDemo      Boolean       @default(true)
   
-  // API Configuration
-  apiKey      String
-  apiSecret   String
+  // API Credentials (encrypted)
+  apiKey      String?       @db.Text
+  apiSecret   String?       @db.Text
   apiUrl      String?
   
-  // Account Status
-  isActive    Boolean @default(false)
-  isConnected Boolean @default(false)
+  // Account info
+  balance     Decimal       @default(0) @db.Decimal(20, 8)
+  equity      Decimal       @default(0) @db.Decimal(20, 8)
+  margin      Decimal       @default(0) @db.Decimal(20, 8)
+  
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
   lastSync    DateTime?
-  
-  // Account Details
-  balance        Float?
-  equity         Float?
-  margin         Float?
-  dayTradingBuyingPower Float?
-  
-  // Risk Settings
-  maxDailyLoss   Float?
-  maxPositions   Int @default(3)
-  
-  // Timestamps
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  
+
   // Relations
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  bots Bot[]
-  trades Trade[]
-  
-  @@unique([userId, provider, accountId])
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  orders      Order[]
+  positions   Position[]
+  portfolios  Portfolio[]
+
+  @@unique([userId, platform, accountId])
   @@map("trading_accounts")
 }
 
-model Strategy {
-  id          String       @id @default(cuid())
-  userId      String?
-  name        String
-  description String?
-  type        StrategyType
+// ===== PORTFOLIO MANAGEMENT =====
+model Portfolio {
+  id              String    @id @default(cuid())
+  userId          String
+  tradingAccountId String
+  name            String
   
-  // Strategy Configuration
-  parameters  Json
-  indicators  Json
-  conditions  Json
-  riskSettings Json
+  // Portfolio metrics
+  totalValue      Decimal   @default(0) @db.Decimal(20, 8)
+  totalCost       Decimal   @default(0) @db.Decimal(20, 8)
+  totalPnL        Decimal   @default(0) @db.Decimal(20, 8)
+  totalPnLPercent Decimal   @default(0) @db.Decimal(10, 4)
+  dayPnL          Decimal   @default(0) @db.Decimal(20, 8)
+  dayPnLPercent   Decimal   @default(0) @db.Decimal(10, 4)
   
-  // Strategy Status
-  isPublic    Boolean @default(false)
-  isActive    Boolean @default(true)
-  version     String @default("1.0.0")
-  
-  // Performance Metrics
-  totalTrades    Int @default(0)
-  winningTrades  Int @default(0)
-  totalReturn    Float @default(0)
-  winRate        Float @default(0)
-  sharpeRatio    Float @default(0)
-  maxDrawdown    Float @default(0)
-  
-  // Timestamps
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
   // Relations
-  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
-  bots Bot[]
-  backtests Backtest[]
-  
-  @@map("strategies")
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tradingAccount  TradingAccount @relation(fields: [tradingAccountId], references: [id], onDelete: Cascade)
+  positions       Position[]
+
+  @@map("portfolios")
 }
 
-model Bot {
-  id          String    @id @default(cuid())
-  userId      String
-  accountId   String
-  strategyId  String
+model Position {
+  id              String    @id @default(cuid())
+  portfolioId     String
+  tradingAccountId String
+  symbol          String
+  side            OrderSide
   
-  name        String
-  description String?
+  // Position details
+  quantity        Decimal   @db.Decimal(20, 8)
+  avgPrice        Decimal   @db.Decimal(20, 8)
+  currentPrice    Decimal   @db.Decimal(20, 8)
+  marketValue     Decimal   @db.Decimal(20, 8)
+  costBasis       Decimal   @db.Decimal(20, 8)
   
-  // Bot Configuration
-  settings    Json
-  parameters  Json?
+  // P&L calculations
+  unrealizedPnL   Decimal   @db.Decimal(20, 8)
+  realizedPnL     Decimal   @default(0) @db.Decimal(20, 8)
+  totalPnL        Decimal   @db.Decimal(20, 8)
+  pnlPercent      Decimal   @db.Decimal(10, 4)
   
-  // Bot Status
-  status      BotStatus @default(STOPPED)
-  isActive    Boolean @default(false)
-  
-  // Performance Tracking
-  totalTrades    Int @default(0)
-  winningTrades  Int @default(0)
-  currentPnL     Float @default(0)
-  todayPnL       Float @default(0)
-  totalPnL       Float @default(0)
-  winRate        Float @default(0)
-  
-  // Runtime Stats
-  startedAt      DateTime?
-  lastTradeAt    DateTime?
-  uptime         Int @default(0) // in seconds
-  
-  // Timestamps
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  
+  openedAt        DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  closedAt        DateTime?
+
   // Relations
-  user     User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  account  TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  strategy Strategy       @relation(fields: [strategyId], references: [id], onDelete: Cascade)
-  trades   Trade[]
-  orders   Order[]
-  
-  @@map("bots")
+  portfolio       Portfolio      @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  tradingAccount  TradingAccount @relation(fields: [tradingAccountId], references: [id], onDelete: Cascade)
+  orders          Order[]
+
+  @@unique([portfolioId, symbol])
+  @@map("positions")
 }
 
-model Trade {
-  id       String @id @default(cuid())
-  userId   String
-  botId    String?
-  accountId String
-  
-  // Trade Details
-  symbol      String
-  side        TradeSide
-  quantity    Float
-  entryPrice  Float
-  exitPrice   Float?
-  
-  // P&L Calculation
-  unrealizedPnL Float @default(0)
-  realizedPnL   Float @default(0)
-  commission    Float @default(0)
-  fees          Float @default(0)
-  
-  // Trade Status
-  status      TradeStatus @default(OPEN)
-  
-  // Trade Metadata
-  signalType    String?
-  confidence    Float?
-  stopLoss      Float?
-  takeProfit    Float?
-  trailStop     Boolean @default(false)
-  trailAmount   Float?
-  
-  // Timestamps
-  openedAt  DateTime @default(now())
-  closedAt  DateTime?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  
-  // Relations
-  user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  bot     Bot?           @relation(fields: [botId], references: [id], onDelete: SetNull)
-  account TradingAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  orders  Order[]
-  
-  @@map("trades")
-}
-
+// ===== ORDER MANAGEMENT =====
 model Order {
-  id        String @id @default(cuid())
-  tradeId   String?
-  botId     String?
+  id              String    @id @default(cuid())
+  userId          String
+  tradingAccountId String
+  positionId      String?
   
-  // Order Details
-  symbol       String
-  orderType    OrderType
-  side         TradeSide
-  quantity     Float
-  price        Float?
-  stopPrice    Float?
-  timeInForce  TimeInForce @default(GTC)
+  // Order details
+  symbol          String
+  side            OrderSide
+  type            OrderType
+  quantity        Decimal   @db.Decimal(20, 8)
+  price           Decimal?  @db.Decimal(20, 8)
+  stopPrice       Decimal?  @db.Decimal(20, 8)
   
-  // Order Status
-  status       OrderStatus @default(PENDING)
-  filledQty    Float @default(0)
-  avgFillPrice Float @default(0)
+  // Order status
+  status          OrderStatus @default(PENDING)
+  filledQuantity  Decimal     @default(0) @db.Decimal(20, 8)
+  avgFillPrice    Decimal?    @db.Decimal(20, 8)
   
-  // External References
-  brokerOrderId String?
+  // External references
+  externalOrderId String?
+  clientOrderId   String?
   
   // Timestamps
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  filledAt  DateTime?
-  
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  filledAt        DateTime?
+  cancelledAt     DateTime?
+
   // Relations
-  trade Trade? @relation(fields: [tradeId], references: [id], onDelete: SetNull)
-  bot   Bot?   @relation(fields: [botId], references: [id], onDelete: SetNull)
-  
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tradingAccount  TradingAccount @relation(fields: [tradingAccountId], references: [id], onDelete: Cascade)
+  position        Position?      @relation(fields: [positionId], references: [id])
+  fills           OrderFill[]
+
   @@map("orders")
 }
 
-model Backtest {
-  id         String @id @default(cuid())
-  strategyId String
-  
-  // Backtest Configuration
-  startDate     DateTime
-  endDate       DateTime
-  initialCapital Float
-  commission     Float @default(0)
-  
-  // Results
-  totalReturn    Float @default(0)
-  totalTrades    Int @default(0)
-  winningTrades  Int @default(0)
-  winRate        Float @default(0)
-  maxDrawdown    Float @default(0)
-  sharpeRatio    Float @default(0)
-  profitFactor   Float @default(0)
-  avgWin         Float @default(0)
-  avgLoss        Float @default(0)
-  
-  // Backtest Data
-  results Json?
-  equity  Json?
-  
-  // Status
-  status    BacktestStatus @default(PENDING)
-  
-  // Timestamps
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  
+model OrderFill {
+  id          String    @id @default(cuid())
+  orderId     String
+  quantity    Decimal   @db.Decimal(20, 8)
+  price       Decimal   @db.Decimal(20, 8)
+  commission  Decimal   @default(0) @db.Decimal(20, 8)
+  timestamp   DateTime  @default(now())
+
   // Relations
-  strategy Strategy @relation(fields: [strategyId], references: [id], onDelete: Cascade)
-  
-  @@map("backtests")
+  order       Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("order_fills")
 }
 
-model Notification {
-  id      String            @id @default(cuid())
-  userId  String
+// ===== STRATEGY MANAGEMENT =====
+model Strategy {
+  id          String        @id @default(cuid())
+  userId      String
+  name        String
+  description String?
+  type        StrategyType
+  config      Json          // Strategy-specific configuration
+  isActive    Boolean       @default(false)
+  isDemo      Boolean       @default(true)
   
-  title   String
-  message String
-  type    NotificationType
+  // Performance metrics
+  totalTrades   Int           @default(0)
+  winRate       Decimal       @default(0) @db.Decimal(5, 2)
+  totalPnL      Decimal       @default(0) @db.Decimal(20, 8)
+  maxDrawdown   Decimal       @default(0) @db.Decimal(10, 4)
   
-  isRead  Boolean @default(false)
-  
-  // Metadata
-  data    Json?
-  
-  // Timestamps
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
   // Relations
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("strategies")
+}
+
+// ===== NOTIFICATIONS =====
+model Notification {
+  id        String            @id @default(cuid())
+  userId    String
+  type      NotificationType
+  title     String
+  message   String
+  data      Json?             // Additional data
+  isRead    Boolean           @default(false)
+  createdAt DateTime          @default(now())
+
+  // Relations
+  user      User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   @@map("notifications")
 }
 
-model Subscription {
-  id              String @id @default(cuid())
-  userId          String
-  
-  // Stripe Details
-  stripeCustomerId       String?
-  stripeSubscriptionId   String? @unique
-  stripePriceId          String?
-  stripeCurrentPeriodEnd DateTime?
-  
-  // Subscription Details
-  tier        SubscriptionTier
-  status      SubscriptionStatus @default(ACTIVE)
-  
-  // Timestamps
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  
-  // Relations
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  @@map("subscriptions")
+// ===== ENUMS =====
+enum TradingMode {
+  DEMO
+  LIVE
 }
 
-// Enums
-enum Role {
-  USER
-  ADMIN
-  SUPER_ADMIN
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
 }
 
-enum SubscriptionTier {
-  STARTER
-  PROFESSIONAL
-  ENTERPRISE
-}
-
-enum SubscriptionStatus {
-  ACTIVE
-  INACTIVE
-  CANCELED
-  PAST_DUE
-}
-
-enum BrokerProvider {
-  APEX
-  NINJATRADER
-  INTERACTIVE_BROKERS
-  TD_AMERITRADE
-  E_TRADE
-  SCHWAB
+enum TradingPlatform {
   BINANCE
+  BYBIT
+  TRADOVATE
+  NINJATRADER
   COINBASE
+  KRAKEN
 }
 
-enum StrategyType {
-  ICT
-  SCALPING
-  SWING
-  TREND_FOLLOWING
-  MEAN_REVERSION
-  BREAKOUT
-  ARBITRAGE
-  CUSTOM
+enum AccountType {
+  SPOT
+  MARGIN
+  FUTURES
+  OPTIONS
 }
 
-enum BotStatus {
-  RUNNING
-  STOPPED
-  PAUSED
-  ERROR
-  STARTING
-  STOPPING
-}
-
-enum TradeSide {
+enum OrderSide {
   BUY
   SELL
-  LONG
-  SHORT
-}
-
-enum TradeStatus {
-  OPEN
-  CLOSED
-  CANCELLED
 }
 
 enum OrderType {
@@ -448,36 +294,30 @@ enum OrderType {
   LIMIT
   STOP
   STOP_LIMIT
-  TRAILING_STOP
+  OCO
 }
 
 enum OrderStatus {
   PENDING
-  WORKING
-  FILLED
+  SUBMITTED
   PARTIALLY_FILLED
+  FILLED
   CANCELLED
   REJECTED
+  EXPIRED
 }
 
-enum TimeInForce {
-  DAY
-  GTC
-  IOC
-  FOK
-}
-
-enum BacktestStatus {
-  PENDING
-  RUNNING
-  COMPLETED
-  FAILED
+enum StrategyType {
+  EMA_CROSSOVER
+  MEAN_REVERSION
+  ICT_STRATEGY
+  CUSTOM
 }
 
 enum NotificationType {
-  TRADE
-  BOT_STATUS
-  ACCOUNT
-  SYSTEM
-  MARKETING
+  ORDER_FILLED
+  ORDER_CANCELLED
+  STRATEGY_ALERT
+  ACCOUNT_UPDATE
+  SYSTEM_ALERT
 }
